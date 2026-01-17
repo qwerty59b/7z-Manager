@@ -1,6 +1,6 @@
 # For more information, please refer to https://aka.ms/vscode-docker-python
 # FROM python:3.9-buster
-FROM python:3.13.11-slim-trixie
+FROM python:3.9.8-slim-bullseye
 
 # Keeps Python from generating .pyc files in the container
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -22,4 +22,5 @@ RUN python -m pip install --no-cache-dir -r requirements.txt
 
 # Run main script
 CMD ["bash", "start.sh"]
+
 
