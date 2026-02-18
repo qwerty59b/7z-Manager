@@ -22,7 +22,8 @@ import pyrogram.errors
 from humanize import naturalsize
 from pyrogram import Client, filters, idle
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
-from pyromod import listen
+from pyromod import Client as PyromodClient  # noqa: F401 - patches pyrogram.Client
+from pyromod.exceptions import ListenerTimeout
 
 from functions import *
 
@@ -207,8 +208,8 @@ async def rename_file(client, message):
         f"Select the file number to rename:\n{file_options}"
     )
     try:
-        response = await client.listen(user_id, filters=filters.text, timeout=60)
-    except asyncio.TimeoutError:
+        response = await client.listen(chat_id=user_id, filters=filters.text, timeout=60)
+    except ListenerTimeout:
         await prompt_message.edit_text("No response received. Operation cancelled.")
         return
 
@@ -235,8 +236,8 @@ async def rename_file(client, message):
         f"Enter the new name for **{old_filename}** (include the extension):"
     )
     try:
-        response = await client.listen(user_id, filters=filters.text, timeout=60)
-    except asyncio.TimeoutError:
+        response = await client.listen(chat_id=user_id, filters=filters.text, timeout=60)
+    except ListenerTimeout:
         await prompt_message.edit_text("No response received. Operation cancelled.")
         return
 
@@ -367,7 +368,7 @@ async def compress(client, message):
             filters=filters.text,
             timeout=60,
         )
-    except asyncio.TimeoutError:
+    except ListenerTimeout:
         await message.reply_text("No response received. Operation cancelled.")
         return
 
@@ -385,7 +386,7 @@ async def compress(client, message):
             filters=filters.text,
             timeout=60,
         )
-    except asyncio.TimeoutError:
+    except ListenerTimeout:
         await message.reply_text("No response received. Operation cancelled.")
         return
 
