@@ -25,8 +25,21 @@ from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 from pyromod import Client as PyromodClient  # noqa: F401 - patches pyrogram.Client
 from pyromod.exceptions import ListenerTimeout
 
-# Fix pyromod 3.1.6: self.listeners may not be initialized for all ListenerTypes,
-# causing KeyError on every incoming message when no listener is registered.
+# Fix pyromod 3.1.6 bugs:
+#
+# Bug 1 (infinite recursion): MessageHandler.old__init__ points to the patched
+# __init__ instead of the original, so self.original_callback gets overwritten
+# with resolve_future_or_callback, causing infinite recursion on every message.
+# Fix: replace old__init__ with the correct original pyrogram behaviour.
+import pyrogram.handlers.message_handler as _mh_mod
+def _mh_old_init(self, callback, filters=None):
+    self.callback = callback
+    self.filters = filters
+_mh_mod.MessageHandler.old__init__ = _mh_old_init
+
+# Bug 2 (KeyError): self.listeners dict may not be keyed for all ListenerTypes,
+# causing KeyError in get_listener_matching_with_data on every incoming message.
+# Fix: return None (no listener) instead of raising KeyError.
 _orig_get_listener = Client.get_listener_matching_with_data
 def _safe_get_listener(self, data, listener_type):
     if not hasattr(self, 'listeners') or listener_type not in self.listeners:
