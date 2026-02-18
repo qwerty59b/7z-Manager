@@ -292,90 +292,157 @@ async def rename_file(client, message):
 @bot.on_message(filters.command("download"))
 async def download_from_url(client, message):
     user_id = message.from_user.id
-    if message.reply_to_message:
-        url = str(message.reply_to_message.text)
+
+    # --- Obtener URL(s) ---
+    if message.reply_to_message and message.reply_to_message.text:
+        raw_input = message.reply_to_message.text.strip()
     else:
         args = message.text.split(maxsplit=1)
         if len(args) < 2:
             await message.reply_text(
-                "Please provide a URL to download.\nUsage: `/download <URL>`"
+                "⚠️ Provide one or more URLs to download.\n"
+                "Usage: `/download <URL1> <URL2> ...`"
             )
             return
+        raw_input = args[1].strip()
 
-        url = args[1].strip()
+    # Soporte para múltiples URLs (separadas por espacios o saltos de línea)
+    urls = [u.strip() for u in re.split(r"[\s\n]+", raw_input) if u.strip()]
 
-    # Validate URL
-    if not url.startswith(("http://", "https://")):
-        await message.reply_text("Invalid URL provided.")
+    # --- Validar URLs ---
+    invalid_urls = [u for u in urls if not u.startswith(("http://", "https://"))]
+    if invalid_urls:
+        await message.reply_text(
+            f"❌ Invalid URL(s):\n" + "\n".join(invalid_urls)
+        )
         return
 
-    # Define the directory for the user
     user_dir = SERVE_DIRECTORY.joinpath(f"{user_id}").joinpath("files")
     user_dir.mkdir(parents=True, exist_ok=True)
 
-    progress_message = await message.reply_text("Starting download...")
+    timeout = aiohttp.ClientTimeout(total=3600, connect=30)  # 1h total, 30s conexión
 
-    try:
+    for url in urls:
+        progress_message = await message.reply_text(f"⏳ Starting download...\n`{url}`")
         start_time = time.time()
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url) as resp:
-                if resp.status != 200:
-                    await progress_message.edit_text(
-                        f"Failed to download the file. HTTP Status: {resp.status}"
-                    )
-                    return
 
-                try:  # Try to get the filename from the content-disposition header
-                    content_disposition = resp.headers.get("content-disposition")
-                    if content_disposition:
-                        filename = os.path.basename(
-                            content_disposition.split("filename*=UTF-8''")[1]
-                            .strip()
-                            .strip('"')
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(url, allow_redirects=True) as resp:
+                    if resp.status != 200:
+                        await progress_message.edit_text(
+                            f"❌ Failed to download.\nURL: `{url}`\nHTTP Status: `{resp.status}`"
                         )
-                    else:
-                        parsed_url = urlparse(url)
-                        path = unquote(parsed_url.path)
-                        filename = os.path.basename(path)
-                except:
-                    filename = os.path.basename(url.split("/")[-1].split("?")[0])
+                        continue
 
-                filepath = user_dir / filename
-                total_size = int(resp.headers.get("content-length", 0))
-                downloaded = 0
-                chunk_size = _MEGABYTE  # 1 MB chunks
-                with open(filepath, "wb") as f:
-                    async for chunk in resp.content.iter_chunked(chunk_size):
-                        f.write(chunk)
-                        downloaded += len(chunk)
-                        await progress_bar(
-                            downloaded,
-                            total_size,
-                            "📥 Downloading:",
-                            start_time,
-                            progress_message,
-                            filename,
+                    total_size = int(resp.headers.get("content-length", 0))
+
+                    # --- Detectar nombre de archivo ---
+                    filename = _extract_filename(resp, url)
+                    if not filename:
+                        await progress_message.edit_text(
+                            f"❌ Could not determine a filename for:\n`{url}`"
                         )
-        await progress_message.delete()
+                        continue
 
-        # Add to user's file list
-        mime_type = resp.headers.get("Content-Type", "application/octet-stream")
-        if user_id in users_list:
-            users_list[user_id][message.id] = {
+                    # Evitar sobreescribir si ya existe
+                    filepath = user_dir / filename
+                    filepath = _unique_filepath(filepath)
+                    filename = filepath.name
+
+                    # --- Descargar con barra de progreso ---
+                    downloaded = 0
+                    chunk_size = _MEGABYTE  # 1 MB
+                    last_edit = 0.0
+
+                    with open(filepath, "wb") as f:
+                        async for chunk in resp.content.iter_chunked(chunk_size):
+                            f.write(chunk)
+                            downloaded += len(chunk)
+
+                            now = time.time()
+                            if now - last_edit >= 20 or downloaded == total_size:
+                                await progress_bar(
+                                    downloaded,
+                                    total_size or downloaded,
+                                    "📥 Downloading:",
+                                    start_time,
+                                    progress_message,
+                                    filename,
+                                )
+                                last_edit = now
+
+                    # Leído dentro del bloque mientras la respuesta sigue abierta
+                    mime_type = resp.headers.get("Content-Type", "application/octet-stream").split(";")[0].strip()
+
+            # --- Registrar en la lista del usuario con clave única ---
+            file_key = int(time.time() * 1000)  # timestamp en ms como clave única
+            if user_id not in users_list:
+                users_list[user_id] = {}
+            users_list[user_id][file_key] = {
                 "mime_type": mime_type,
                 "filename": filename,
             }
-        else:
-            users_list[user_id] = {
-                message.id: {"mime_type": mime_type, "filename": filename}
-            }
 
-        await message.reply_text(
-            f"Downloaded **{filename}** and added to your file list."
-        )
+            await progress_message.edit_text(
+                f"✅ Downloaded **{filename}** ({humanize.naturalsize(filepath.stat().st_size)}) "
+                f"and added to your file list."
+            )
 
-    except Exception as e:
-        await progress_message.edit_text(f"Failed to download the file: {str(e)}")
+        except asyncio.TimeoutError:
+            await progress_message.edit_text(
+                f"❌ Download timed out for:\n`{url}`"
+            )
+        except aiohttp.ClientError as e:
+            await progress_message.edit_text(
+                f"❌ Connection error for:\n`{url}`\n`{str(e)}`"
+            )
+        except Exception as e:
+            await progress_message.edit_text(
+                f"❌ Unexpected error: `{str(e)}`"
+            )
+
+
+def _extract_filename(resp: aiohttp.ClientResponse, url: str) -> str:
+    """Extrae el nombre del archivo desde headers o URL, de forma robusta."""
+    content_disposition = resp.headers.get("Content-Disposition", "")
+
+    # Caso 1: filename*=UTF-8''nombre.zip  (RFC 5987)
+    match = re.search(r"filename\*=UTF-8''([^\s;]+)", content_disposition, re.IGNORECASE)
+    if match:
+        return unquote(match.group(1)).strip().strip('"')
+
+    # Caso 2: filename="nombre.zip" o filename=nombre.zip
+    match = re.search(r'filename=["\']?([^"\';\r\n]+)["\']?', content_disposition, re.IGNORECASE)
+    if match:
+        return match.group(1).strip().strip('"\'')
+
+    # Caso 3: extraer del path de la URL
+    parsed = urlparse(url)
+    path = unquote(parsed.path)
+    name = os.path.basename(path)
+    if name and "." in name:
+        return name
+
+    # Caso 4: generar nombre desde Content-Type
+    content_type = resp.headers.get("Content-Type", "application/octet-stream").split(";")[0].strip()
+    ext = mimetypes.guess_extension(content_type) or ".bin"
+    return f"download_{int(time.time())}{ext}"
+
+
+def _unique_filepath(filepath: pathlib.Path) -> pathlib.Path:
+    """Si el archivo ya existe, agrega un sufijo numérico para no sobreescribir."""
+    if not filepath.exists():
+        return filepath
+    stem = filepath.stem
+    suffix = filepath.suffix
+    parent = filepath.parent
+    counter = 1
+    while True:
+        new_path = parent / f"{stem}_{counter}{suffix}"
+        if not new_path.exists():
+            return new_path
+        counter += 1
 
 @bot.on_message(filters.command("compress"))
 async def compress(client, message):
