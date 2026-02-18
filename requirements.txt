@@ -2,7 +2,7 @@ pyrofork==2.3.40
 TgCrypto-pyrofork==1.2.6
 multivolumefile==0.2.3
 py7zr==0.18.9
-pyromod==1.5
+pyromod==3.1.6
 humanize==4.2.0
 pypdl==1.4.4
 aiohttp==3.11.0

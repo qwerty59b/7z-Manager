@@ -15,7 +15,7 @@ def zip_files(path, part_size, filename, password)->Path:
 
 	dir_files = path
 	partsdir=dir_files.parent.joinpath("parts")
-	size = int(part_size) if part_size else 2000
+	size = int(part_size) if part_size else 2000 * _MEGABYTE
 	copy_filter = [{"id": FILTER_COPY}]
 	encryption = False
 	try:
@@ -35,7 +35,7 @@ def zip_files(path, part_size, filename, password)->Path:
 		file_path = dir_files.joinpath(file)
 		total_size += file_path.stat().st_size
 
-	smaller=(total_size < size * _MEGABYTE)
+	smaller=(total_size < size)
 
 	if smaller:
 
@@ -50,7 +50,7 @@ def zip_files(path, part_size, filename, password)->Path:
 
 		with multivolumefile.open(
 			f"{partsdir}/{filename_7z}",
-			"wb",size * _MEGABYTE
+			"wb",size
 		) as target_archive:
 			with SevenZipFile(
 					target_archive,"w",filters=copy_filter,
