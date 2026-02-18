@@ -74,39 +74,6 @@ async def _ask(self, chat_id, text, filters=None, timeout=60):
 Client.listen = _listen
 Client.ask = _ask
 
-# Bug 3 (KeyError en listen): al añadir un listener, el diccionario self.listeners puede no tener
-# la clave del tipo de listener, causando KeyError. Aseguramos que la clave exista.
-import pyromod.listen.client
-
-# Intentamos importar ListenerTypes desde diferentes lugares
-try:
-    from pyromod.types import ListenerTypes
-    DEFAULT_LISTENER_TYPE = ListenerTypes.MESSAGE
-except ImportError:
-    try:
-        from pyromod.listen.types import ListenerTypes
-        DEFAULT_LISTENER_TYPE = ListenerTypes.MESSAGE
-    except ImportError:
-        # Si no se encuentra, usamos el valor string por defecto
-        DEFAULT_LISTENER_TYPE = 'message'
-
-_original_listen = pyromod.listen.client.Client.listen
-
-async def _safe_listen(self, chat_id, filters=None, listener_type=None, timeout=None):
-    # Si no se proporciona listener_type, usar el valor por defecto
-    if listener_type is None:
-        listener_type = DEFAULT_LISTENER_TYPE
-    # Garantizamos que el diccionario y la clave existen
-    if not hasattr(self, 'listeners'):
-        self.listeners = {}
-    self.listeners.setdefault(listener_type, [])
-    # Llamamos al método original
-    return await _original_listen(self, chat_id, filters=filters, listener_type=listener_type, timeout=timeout)
-
-# Reemplazamos el método original por nuestra versión segura
-pyromod.listen.client.Client.listen = _safe_listen
-# ===================== FIN DE LOS PARCHES =====================
-
 from functions import *
 
 _MEGABYTE = 1048576
