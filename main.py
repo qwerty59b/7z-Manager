@@ -22,28 +22,57 @@ import pyrogram.errors
 from humanize import naturalsize
 from pyrogram import Client, filters, idle
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
-from pyromod import Client as PyromodClient  # noqa: F401 - patches pyrogram.Client
-from pyromod.exceptions import ListenerTimeout
+from inspect import iscoroutinefunction as _iscoro
+from pyrogram.handlers import MessageHandler as _MessageHandler
 
-# ===================== PARCHES PARA PYROMOD =====================
-# Arregla bugs conocidos de pyromod 3.1.6
 
-# Bug 1 (infinite recursion): MessageHandler.old__init__ apunta al __init__ parcheado
-# en lugar del original, causando recursión infinita.
-import pyrogram.handlers.message_handler as _mh_mod
-def _mh_old_init(self, callback, filters=None):
-    self.callback = callback
-    self.filters = filters
-_mh_mod.MessageHandler.old__init__ = _mh_old_init
+class ListenerTimeout(Exception):
+    pass
 
-# Bug 2 (KeyError en get_listener): al recibir un mensaje, si no hay listeners para ese tipo,
-# se producía KeyError. Lo evitamos devolviendo None.
-_orig_get_listener = Client.get_listener_matching_with_data
-def _safe_get_listener(self, data, listener_type):
-    if not hasattr(self, 'listeners') or listener_type not in self.listeners:
-        return None
-    return _orig_get_listener(self, data, listener_type)
-Client.get_listener_matching_with_data = _safe_get_listener
+
+_listeners = {}  # chat_id -> (asyncio.Future, filter | None)
+
+
+async def _listener_intercept(client, message):
+    """High-priority handler that resolves pending listen() futures."""
+    chat_id = message.chat.id
+    if chat_id not in _listeners:
+        return
+    future, filter_fn = _listeners[chat_id]
+    if future.done():
+        _listeners.pop(chat_id, None)
+        return
+    if filter_fn is not None:
+        if _iscoro(filter_fn.__call__):
+            matches = await filter_fn(client, message)
+        else:
+            matches = filter_fn(client, message)
+        if not matches:
+            return
+    _listeners.pop(chat_id, None)
+    future.set_result(message)
+    raise pyrogram.StopPropagation
+
+
+async def _listen(self, chat_id, filters=None, timeout=60):
+    future = asyncio.get_running_loop().create_future()
+    _listeners[chat_id] = (future, filters)
+    try:
+        return await asyncio.wait_for(future, timeout=timeout)
+    except asyncio.TimeoutError:
+        _listeners.pop(chat_id, None)
+        raise ListenerTimeout(timeout)
+
+
+async def _ask(self, chat_id, text, filters=None, timeout=60):
+    sent = await self.send_message(chat_id, text)
+    response = await _listen(self, chat_id, filters=filters, timeout=timeout)
+    response.request = sent
+    return response
+
+
+Client.listen = _listen
+Client.ask = _ask
 
 # Bug 3 (KeyError en listen): al añadir un listener, el diccionario self.listeners puede no tener
 # la clave del tipo de listener, causando KeyError. Aseguramos que la clave exista.
@@ -97,6 +126,7 @@ SERVE_DIRECTORY = pathlib.Path("public").absolute()
 SERVE_DIRECTORY.mkdir(parents=True, exist_ok=True)
 
 bot = Client("my_bot", api_hash=API_HASH, api_id=API_ID, bot_token=BOT_TOKEN)
+bot.add_handler(_MessageHandler(_listener_intercept), group=-1)
 
 users_list = {}  # user_id: {message_id: {'mime_type': ..., 'filename': ...}}
 empty_list = "📝 Still no files to compress."
