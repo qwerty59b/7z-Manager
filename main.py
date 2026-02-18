@@ -25,6 +25,15 @@ from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 from pyromod import Client as PyromodClient  # noqa: F401 - patches pyrogram.Client
 from pyromod.exceptions import ListenerTimeout
 
+# Fix pyromod 3.1.6: self.listeners may not be initialized for all ListenerTypes,
+# causing KeyError on every incoming message when no listener is registered.
+_orig_get_listener = Client.get_listener_matching_with_data
+def _safe_get_listener(self, data, listener_type):
+    if not hasattr(self, 'listeners') or listener_type not in self.listeners:
+        return None
+    return _orig_get_listener(self, data, listener_type)
+Client.get_listener_matching_with_data = _safe_get_listener
+
 from functions import *
 
 _MEGABYTE=1048576
