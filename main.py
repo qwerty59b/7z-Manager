@@ -48,11 +48,25 @@ Client.get_listener_matching_with_data = _safe_get_listener
 # Bug 3 (KeyError en listen): al añadir un listener, el diccionario self.listeners puede no tener
 # la clave del tipo de listener, causando KeyError. Aseguramos que la clave exista.
 import pyromod.listen.client
-from pyromod.listen.types import ListenerTypes
+
+# Intentamos importar ListenerTypes desde diferentes lugares
+try:
+    from pyromod.types import ListenerTypes
+    DEFAULT_LISTENER_TYPE = ListenerTypes.MESSAGE
+except ImportError:
+    try:
+        from pyromod.listen.types import ListenerTypes
+        DEFAULT_LISTENER_TYPE = ListenerTypes.MESSAGE
+    except ImportError:
+        # Si no se encuentra, usamos el valor string por defecto
+        DEFAULT_LISTENER_TYPE = 'message'
 
 _original_listen = pyromod.listen.client.Client.listen
 
-async def _safe_listen(self, chat_id, filters=None, listener_type=ListenerTypes.MESSAGE, timeout=None):
+async def _safe_listen(self, chat_id, filters=None, listener_type=None, timeout=None):
+    # Si no se proporciona listener_type, usar el valor por defecto
+    if listener_type is None:
+        listener_type = DEFAULT_LISTENER_TYPE
     # Garantizamos que el diccionario y la clave existen
     if not hasattr(self, 'listeners'):
         self.listeners = {}
